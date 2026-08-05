@@ -1,6 +1,9 @@
 import torch
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from torch import nn
+
+from inference_platform.inference.engine import InferenceEngine
 
 
 app = FastAPI()
@@ -10,9 +13,26 @@ class PredictionRequest(BaseModel):
     inputs: list[list[float]]
 
 
+def create_model() -> nn.Module:
+    return nn.Sequential(
+        nn.Linear(4, 16),
+        nn.ReLU(),
+        nn.Linear(16, 3),
+    )
+
+
+torch.manual_seed(42)
+
+model = create_model()
+engine = InferenceEngine(model=model)
+
+
 @app.get("/health")
 def health():
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "device": str(engine.device),
+    }
 
 
 @app.post("/predict")
@@ -38,14 +58,16 @@ def predict(request: PredictionRequest):
         dtype=torch.float32,
     )
 
-    return {
-        "input_batch": input_batch.tolist(),
-        "shape": list(input_batch.shape),
-        "dtype": str(input_batch.dtype),
-    }
+    output_batch = engine.predict(input_batch)
 
-# @app.post("/echo")
-# def echo(request: MessageRequest):
-#     return {
-#         "recived_message": request.message
-#     }
+    predicted_classes = torch.argmax(
+        output_batch,
+        dim=1,
+    )
+
+    return {
+        "predictions": predicted_classes.tolist(),
+        "logits": output_batch.tolist(),
+        "batch_size": input_batch.shape[0],
+        "device": str(engine.device),
+    }
